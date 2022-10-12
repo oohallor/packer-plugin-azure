@@ -322,6 +322,10 @@ func (c *Config) isManagedImage() bool {
 	return c.ManagedImageName != ""
 }
 
+func (c *Config) isToSharedImageGallery() bool {
+	return c.SharedGalleryDestination.SigDestinationGalleryName != ""
+}
+
 func (c *Config) toVirtualMachineCaptureParameters() *compute.VirtualMachineCaptureParameters {
 	return &compute.VirtualMachineCaptureParameters{
 		DestinationContainerName: &c.CaptureContainerName,
