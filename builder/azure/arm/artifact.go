@@ -100,6 +100,14 @@ func NewManagedImageArtifactWithSIGAsDestination(osType, resourceGroup, name, lo
 	}, nil
 }
 
+func NewSharedImageArtifact(osType, destinationSharedImageGalleryId string, generatedData map[string]interface{}) (*Artifact, error) {
+	return &Artifact{
+		OSType:                           osType,
+		ManagedImageSharedImageGalleryId: destinationSharedImageGalleryId,
+		StateData:                        generatedData,
+	}, nil
+}
+
 func NewArtifact(template *CaptureTemplate, getSasUrl func(name string) string, osType string, generatedData map[string]interface{}) (*Artifact, error) {
 	if template == nil {
 		return nil, fmt.Errorf("nil capture template")
@@ -178,6 +186,10 @@ func (a *Artifact) isManagedImage() bool {
 	return a.ManagedImageResourceGroupName != ""
 }
 
+func (a *Artifact) isPublishedToSIG() bool {
+	return a.ManagedImageSharedImageGalleryId != ""
+}
+
 func (*Artifact) BuilderId() string {
 	return BuilderId
 }
@@ -190,7 +202,13 @@ func (a *Artifact) Id() string {
 	if a.OSDiskUri != "" {
 		return a.OSDiskUri
 	}
-	return a.ManagedImageId
+	if a.ManagedImageId != "" {
+		return a.ManagedImageId
+	}
+	if a.ManagedImageSharedImageGalleryId != "" {
+		return a.ManagedImageSharedImageGalleryId
+	}
+	return "UNKNOWN ID"
 }
 
 func (a *Artifact) State(name string) interface{} {
@@ -221,16 +239,13 @@ func (a *Artifact) String() string {
 		if a.ManagedImageDataDiskSnapshotPrefix != "" {
 			buf.WriteString(fmt.Sprintf("ManagedImageDataDiskSnapshotPrefix: %s\n", a.ManagedImageDataDiskSnapshotPrefix))
 		}
-		if a.ManagedImageSharedImageGalleryId != "" {
-			buf.WriteString(fmt.Sprintf("ManagedImageSharedImageGalleryId: %s\n", a.ManagedImageSharedImageGalleryId))
-		}
 		if a.OSDiskUri != "" {
 			buf.WriteString(fmt.Sprintf("OSDiskUri: %s\n", a.OSDiskUri))
 		}
 		if a.OSDiskUriReadOnlySas != "" {
 			buf.WriteString(fmt.Sprintf("OSDiskUriReadOnlySas: %s\n", a.OSDiskUriReadOnlySas))
 		}
-	} else {
+	} else if !a.isPublishedToSIG() {
 		buf.WriteString(fmt.Sprintf("StorageAccountLocation: %s\n", a.StorageAccountLocation))
 		buf.WriteString(fmt.Sprintf("OSDiskUri: %s\n", a.OSDiskUri))
 		buf.WriteString(fmt.Sprintf("OSDiskUriReadOnlySas: %s\n", a.OSDiskUriReadOnlySas))
@@ -241,6 +256,16 @@ func (a *Artifact) String() string {
 				buf.WriteString(fmt.Sprintf("AdditionalDiskUri (datadisk-%d): %s\n", i+1, additionaldisk.AdditionalDiskUri))
 				buf.WriteString(fmt.Sprintf("AdditionalDiskUriReadOnlySas (datadisk-%d): %s\n", i+1, additionaldisk.AdditionalDiskUriReadOnlySas))
 			}
+		}
+	}
+	if a.isPublishedToSIG() {
+		buf.WriteString(fmt.Sprintf("ManagedImageSharedImageGalleryId: %s\n", a.ManagedImageSharedImageGalleryId))
+		buf.WriteString(fmt.Sprintf("SharedImageGalleryResourceGroup: %s\n", a.State(constants.ArmManagedImageSigPublishResourceGroup).(string)))
+		buf.WriteString(fmt.Sprintf("SharedImageGalleryName: %s\n", a.State(constants.ArmManagedImageSharedGalleryName).(string)))
+		buf.WriteString(fmt.Sprintf("SharedImageGalleryImageName: %s\n", a.State(constants.ArmManagedImageSharedGalleryImageName).(string)))
+		buf.WriteString(fmt.Sprintf("SharedImageGalleryImageVersion: %s\n", a.State(constants.ArmManagedImageSharedGalleryImageVersion).(string)))
+		if rr, ok := a.State(constants.ArmManagedImageSharedGalleryReplicationRegions).([]string); ok {
+			buf.WriteString(fmt.Sprintf("SharedImageGalleryReplicatedRegions: %s\n", strings.Join(rr, ", ")))
 		}
 	}
 
@@ -263,24 +288,25 @@ func (a *Artifact) hcpPackerRegistryMetadata() *registryimage.Image {
 		sourceID = sourceImage
 	}
 
+	labels := make(map[string]interface{})
+
+	if a.isPublishedToSIG() {
+		labels["sig_resource_group"] = a.State(constants.ArmManagedImageSigPublishResourceGroup).(string)
+		labels["sig_name"] = a.State(constants.ArmManagedImageSharedGalleryName).(string)
+		labels["sig_image_name"] = a.State(constants.ArmManagedImageSharedGalleryImageName).(string)
+		labels["sig_image_version"] = a.State(constants.ArmManagedImageSharedGalleryImageVersion).(string)
+		if rr, ok := a.State(constants.ArmManagedImageSharedGalleryReplicationRegions).([]string); ok {
+			labels["sig_replicated_regions"] = strings.Join(rr, ", ")
+		}
+	}
+
 	if a.isManagedImage() {
 		id := a.ManagedImageId
 		location := a.ManagedImageLocation
 
-		labels := make(map[string]interface{})
 		labels["os_type"] = a.OSType
 		labels["managed_image_resourcegroup_name"] = a.ManagedImageResourceGroupName
 		labels["managed_image_name"] = a.ManagedImageName
-
-		if a.ManagedImageSharedImageGalleryId != "" {
-			labels["sig_resource_group"] = a.State(constants.ArmManagedImageSigPublishResourceGroup).(string)
-			labels["sig_name"] = a.State(constants.ArmManagedImageSharedGalleryName).(string)
-			labels["sig_image_name"] = a.State(constants.ArmManagedImageSharedGalleryImageName).(string)
-			labels["sig_image_version"] = a.State(constants.ArmManagedImageSharedGalleryImageVersion).(string)
-			if rr, ok := a.State(constants.ArmManagedImageSharedGalleryReplicationRegions).([]string); ok {
-				labels["sig_replicated_regions"] = strings.Join(rr, ", ")
-			}
-		}
 
 		if a.OSDiskUri != "" {
 			labels["os_disk_uri"] = a.OSDiskUri
@@ -297,7 +323,6 @@ func (a *Artifact) hcpPackerRegistryMetadata() *registryimage.Image {
 		return img
 	}
 
-	labels := make(map[string]interface{})
 	labels["storage_account_location"] = a.StorageAccountLocation
 	labels["template_uri"] = a.TemplateUri
 
