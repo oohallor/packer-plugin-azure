@@ -202,7 +202,13 @@ func (a *Artifact) Id() string {
 	if a.OSDiskUri != "" {
 		return a.OSDiskUri
 	}
-	return a.ManagedImageId
+	if a.ManagedImageId != "" {
+		return a.ManagedImageId
+	}
+	if a.ManagedImageSharedImageGalleryId != "" {
+		return a.ManagedImageSharedImageGalleryId
+	}
+	return "UNKNOWN ID"
 }
 
 func (a *Artifact) State(name string) interface{} {
